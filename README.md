@@ -14,7 +14,7 @@
 
 - **24 tuned Triton fused-MoE configs** for H20: 12 `bf16` + 12 `fp8_w8a8` (per-tensor).
 - Covers **Mixtral 8×7B** (E=8), **Qwen MoE** (E=64), and **DeepSeek-V2-Lite** (E=128) shapes that previously had no H20 entries upstream.
-- **Geomean speedup `1.09×`, max `1.74×`** vs vLLM's default-fallback heuristic across 36 (shape × batch) cells (bf16, kernel-level).
+- **Geomean speedup `1.09×` (bf16) / `1.39×` (fp8_w8a8); peak `1.74×` (bf16) / `2.74×` (fp8_w8a8)** vs vLLM's default-fallback heuristic across 36 (shape × batch) cells, kernel-level.
 - Configs upstream as **[vllm#44152](https://github.com/vllm-project/vllm/pull/44152) (bf16)** and **[vllm#44273](https://github.com/vllm-project/vllm/pull/44273) (fp8_w8a8)**.
 - Standalone tuning scripts work on **CUDA 12.2 + torch 2.5.1 + Triton 3.1**, no full vLLM build required.
 
@@ -44,15 +44,18 @@ For more on the reasoning and tuning methodology, see [`reports/2026-06_h20_moe_
 │   └── fp8_w8a8/                # 12 H20 fp8_w8a8 configs (mirrors vllm#44273)
 ├── benchmarks/
 │   ├── moe_kernel/
-│   │   ├── tune_moe_h20.py             # bf16 standalone tuner
-│   │   ├── tune_moe_h20_fp8.py         # fp8_w8a8 (per-tensor) tuner
-│   │   └── compare_default_vs_tuned.py # default-fallback vs tuned harness
+│   │   ├── tune_moe_h20.py                 # bf16 standalone tuner
+│   │   ├── tune_moe_h20_fp8.py             # fp8_w8a8 (per-tensor) tuner
+│   │   ├── compare_default_vs_tuned.py     # bf16 default-fallback vs tuned harness
+│   │   └── compare_default_vs_tuned_fp8.py # fp8_w8a8 default-fallback vs tuned harness
 │   └── results/
-│       └── bf16_default_vs_tuned.md    # 36-point bf16 perf table
+│       ├── bf16_default_vs_tuned.md        # 36-point bf16 perf table (geomean 1.09×)
+│       └── fp8_w8a8_default_vs_tuned.md    # 36-point fp8 perf table (geomean 1.39×)
 ├── reports/
-│   └── 2026-06_h20_moe_tuning.md       # methodology + analysis writeup
+│   ├── 2026-06_h20_moe_tuning.md           # methodology + analysis writeup (English)
+│   └── blog_h20_moe_zh.md                  # Chinese blog post
 └── docs/
-    └── h20_vs_h100_vs_h200.md          # spec & arch comparison
+    └── h20_vs_h100_vs_h200.md              # spec & arch comparison
 ```
 
 ## Coverage matrix
@@ -65,9 +68,11 @@ For more on the reasoning and tuning methodology, see [`reports/2026-06_h20_moe_
 
 All 24 configs were tuned over the full upstream search space (1152 candidates × 18 batch sizes per config) on a single H20 (96 GB HBM3).
 
-## Headline performance numbers (bf16)
+## Headline performance numbers
 
-Kernel-level, `fused_moe_kernel` direct call, 3 warmups + 10-iter mean × 3 medians:
+Kernel-level, `fused_moe_kernel` direct call, 3 warmups + 10-iter mean × 3 medians.
+
+### bf16
 
 | Shape (E, N, K, topk)      | Best speedup | Where                  |
 |----------------------------|-------------:|------------------------|
@@ -80,10 +85,24 @@ Kernel-level, `fused_moe_kernel` direct call, 3 warmups + 10-iter mean × 3 medi
 Full 36-point table: [`benchmarks/results/bf16_default_vs_tuned.md`](./benchmarks/results/bf16_default_vs_tuned.md).
 **Geomean across all 36 cells: 1.09×.**
 
+### fp8_w8a8 (per-tensor)
+
+| Shape (E, N, K, topk)      | Best speedup | Where                  |
+|----------------------------|-------------:|------------------------|
+| (8, 7168, 4096, 2)         |   **2.74×**  | batch = 1              |
+| (128, 1024, 2048, 6)       |   **2.59×**  | batch = 32             |
+| (8, 14336, 4096, 2)        |   **2.48×**  | batch = 1              |
+| (64, 2560, 2048, 6)        |   **2.48×**  | batch = 32             |
+| (128, 512, 2048, 6)        |   **2.38×**  | batch = 128            |
+
+Full 36-point table: [`benchmarks/results/fp8_w8a8_default_vs_tuned.md`](./benchmarks/results/fp8_w8a8_default_vs_tuned.md).
+**Geomean across all 36 cells: 1.39×, with zero regressions (all ≥ 1.00×).**
+
 > Speedups concentrate in **small-to-medium batch** regimes (1–512), where the
 > default 2-branch heuristic in `vllm.model_executor.layers.fused_moe.fused_moe.get_default_config`
-> is most under-tuned. Large batches (≥2048) tie within noise — they're
-> HBM-bandwidth-bound, where kernel-config choice has diminishing leverage.
+> is most under-tuned. Under fp8 the wins are larger and extend to large
+> batches as well (≥ 2048 still 1.08–1.17×) — fp8 halves HBM traffic, so the
+> kernel hasn't yet saturated H20's 4 TB/s HBM3 ceiling.
 
 ## Quickstart: reproduce on your H20
 
@@ -119,7 +138,7 @@ If you're on a recent vLLM main, both sets are upstream-pending in PRs
 - [x] H20 bf16 fused-MoE configs (12 shapes)
 - [x] H20 fp8_w8a8 (per-tensor) fused-MoE configs (12 shapes)
 - [x] bf16 default-vs-tuned 36-point benchmark
-- [ ] fp8_w8a8 default-vs-tuned benchmark (mirror the bf16 harness)
+- [x] fp8_w8a8 default-vs-tuned 36-point benchmark
 - [ ] H20 fp8_w8a8 + `block_shape=[128,128]` configs (DeepSeek-V3 family)
 - [ ] vLLM serve end-to-end TTFT / ITL numbers on H20 (Mixtral, Qwen2-MoE)
 - [ ] SGLang head-to-head on the same shapes
