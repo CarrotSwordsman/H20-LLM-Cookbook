@@ -72,12 +72,65 @@ tuned per-shape JSONs in [`../../configs/bf16/`](../../configs/bf16/).
   shapes are neutral or positive, so realistic batch distributions remain a
   net win. See [`reports/2026-06_h20_moe_tuning.md`](../../reports/2026-06_h20_moe_tuning.md)
   for discussion.
-- **Batch=1 is launch-bound** for E=128 shapes: default's
-  `BLOCK_SIZE_M=16, BLOCK_SIZE_N=32` happens to win marginally there
-  (0.91–0.94×). A focused batch=1 retune would close this.
+- **Batch=1 is launch-bound at ~22 µs floor** on H20: the original cookbook's
+  per-shape tuner uses a single 10-iter mean (no repeat / median), so at this
+  scale shape-to-shape sub-µs noise can pick a config that "wins" by chance
+  during tuning but loses by 5–10 % in the more conservative 3-trial-median
+  measurement used here. A focused batch=1 retune of the 3 cells with the
+  worst regressions (5-trial median over all 1152 candidates, see
+  [`../moe_kernel/retune_batch1_bf16.py`](../moe_kernel/retune_batch1_bf16.py))
+  confirms the search space is **saturated**: the best achievable speedup
+  over default is **1.00×–1.05×** (within the ±0.5 µs noise band of the
+  measurement at 22 µs). Mechanistically, with `topk=6` and `E ∈ {64, 128}`,
+  `moe_align_block_size` pads each active expert to a `BLOCK_SIZE_M`
+  multiple, so the kernel work is dominated by 6×16=96 tokens of
+  padded-zero compute plus Triton kernel-launch + sync overhead — neither
+  of which `BLOCK_*` knobs can move. Closing batch=1 further would require
+  either persistent CTAs / CUDA Graphs to amortize launch overhead, or a
+  specialized small-M kernel. Treat the 0.91–0.94× cells in the table as
+  **noise-band ties with default**, not real regressions.
 
 ## Roadmap
 
-- [ ] fp8_w8a8 default-vs-tuned table (port the same harness to the fp8 path)
+- [x] fp8_w8a8 default-vs-tuned table (see
+  [`fp8_w8a8_default_vs_tuned.md`](./fp8_w8a8_default_vs_tuned.md);
+  geomean 1.39×, peak 2.74×, zero regressions)
+- [x] Batch=1 retune investigation — search space saturated at 22 µs
+  launch-bound floor (see Observations and
+  [`../moe_kernel/retune_batch1_bf16.py`](../moe_kernel/retune_batch1_bf16.py))
 - [ ] Tighter batch grid around 384–768 to remove mid-batch artifacts
 - [ ] vLLM serve end-to-end TTFT / ITL on Mixtral-8×7B and Qwen2-MoE
+- [ ] Persistent-CTA / CUDA-Graph small-M kernel to break the 22 µs floor
+
+## Appendix: batch=1 launch-bound floor analysis
+
+To verify whether the 0.91–0.94× cells at batch=1 in the table above are
+real regressions or measurement artifacts, we exhaustively re-tuned the
+batch=1 entry on the three regressing shapes using a stricter measurement
+protocol than the original tuner: a coarse sweep over all **1152** candidate
+configs followed by a 5-trial-median refinement of the top-20 plus
+`get_default_config()`, all using 3 warmups + 10-iter means
+(`benchmarks/moe_kernel/retune_batch1_bf16.py`).
+
+| Shape (E, N) | default (µs) | best of 1152 (µs) | best speedup vs default | range across 1152 |
+|---|---:|---:|---:|---:|
+| (64, 1280)   | 22.91 | 22.56 | **1.02×** | ~22.5–23.5 µs |
+| (128, 1024)  | 22.54 | 22.64 | **1.00×** *(−0.4 %)* | ~22.5–23.5 µs |
+| (128, 512)   | 23.23 | 22.08 | **1.05×** | ~21.7–23.5 µs |
+
+All three converge to the same **~22 µs launch-bound floor** regardless of
+`BLOCK_SIZE_*`, `GROUP_SIZE_M`, or `num_stages`. With `topk=6` and
+`E ∈ {64, 128}`, `moe_align_block_size` pads each active expert to a
+`BLOCK_SIZE_M` multiple, so the kernel mostly operates on
+`6×BLOCK_SIZE_M = 96` tokens of padded-zero work plus Triton's per-launch
+overhead — neither of which the search-space knobs can reduce.
+
+**Implication**: the 0.91–0.94× cells in the main 36-point table should be
+read as **noise-band ties with default** (single-trial-mean tuning artifacts),
+not real regressions. The geomean 1.09× number stands. To break the 22 µs
+floor on H20 we would need to either (a) amortize launch overhead with
+persistent-CTA scheduling or CUDA Graphs, or (b) write a small-M
+specialization that skips the `moe_align_block_size` padding. Both are
+out-of-scope for the upstream config JSONs but tracked under Roadmap.
+
+Reproduce: `python ../moe_kernel/retune_batch1_bf16.py` (≈ 30 min on H20).

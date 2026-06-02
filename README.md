@@ -139,8 +139,12 @@ If you're on a recent vLLM main, both sets are upstream-pending in PRs
 - [x] H20 fp8_w8a8 (per-tensor) fused-MoE configs (12 shapes)
 - [x] bf16 default-vs-tuned 36-point benchmark
 - [x] fp8_w8a8 default-vs-tuned 36-point benchmark
+- [x] batch=1 launch-bound floor analysis (saturated search space at ~22 µs;
+      see [Appendix](./benchmarks/results/bf16_default_vs_tuned.md#appendix-batch1-launch-bound-floor-analysis))
+- [ ] Tighter batch grid around 384–768 to remove mid-batch artifacts
 - [ ] H20 fp8_w8a8 + `block_shape=[128,128]` configs (DeepSeek-V3 family)
 - [ ] vLLM serve end-to-end TTFT / ITL numbers on H20 (Mixtral, Qwen2-MoE)
+- [ ] Persistent-CTA / CUDA-Graph small-M kernel to break the batch=1 floor
 - [ ] SGLang head-to-head on the same shapes
 
 Issues / PRs welcome.
