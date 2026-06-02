@@ -1,0 +1,40 @@
+cff-version: 1.2.0
+title: "H20 LLM Inference Cookbook: Tuned Triton Fused-MoE Configs for NVIDIA H20"
+message: >-
+  If you use the configs, benchmarks, or methodology from this repository in
+  your research, deployment, or downstream tuning, please cite it as below.
+type: software
+authors:
+  - given-names: Yichuan
+    family-names: Shi
+    alias: CarrotSwordsman
+    email: mershi@tencent.com
+repository-code: "https://github.com/CarrotSwordsman/H20-LLM-Cookbook"
+url: "https://github.com/CarrotSwordsman/H20-LLM-Cookbook"
+abstract: >-
+  A reproducible benchmark suite and tuning recipe collection for NVIDIA H20
+  LLM inference, focused on the Triton fused MoE kernel path used by vLLM and
+  SGLang. Ships 24 tuned configurations (12 bf16 + 12 fp8_w8a8 per-tensor)
+  covering Mixtral 8x7B, Qwen MoE, and DeepSeek-V2-Lite shapes, along with
+  standalone tuning scripts and a 36-point default-vs-tuned benchmark table.
+  Geomean speedup 1.09x, peak 1.74x over vLLM's default-fallback heuristic.
+keywords:
+  - vllm
+  - sglang
+  - triton
+  - fused-moe
+  - mixture-of-experts
+  - nvidia-h20
+  - llm-inference
+  - kernel-tuning
+  - benchmark
+license: MIT
+date-released: "2026-06-01"
+version: "0.1.0"
+identifiers:
+  - description: "Companion vLLM PR (bf16)"
+    type: url
+    value: "https://github.com/vllm-project/vllm/pull/44152"
+  - description: "Companion vLLM PR (fp8_w8a8)"
+    type: url
+    value: "https://github.com/vllm-project/vllm/pull/44273"
