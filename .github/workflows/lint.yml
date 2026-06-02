@@ -1,0 +1,48 @@
+name: lint
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  configs:
+    name: validate MoE config JSONs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Validate filenames, schema, value domains, batch grid
+        run: python scripts/check_configs.py
+
+  python:
+    name: ruff (benchmarks/, scripts/)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install ruff
+        run: pip install ruff==0.6.9
+      - name: Lint
+        # Skip vllm/triton-dependent benchmark scripts that would need GPU env.
+        # We still lint syntax and basic style.
+        run: |
+          ruff check --select E9,F63,F7,F82 \
+            benchmarks/ scripts/
+
+  markdown:
+    name: markdownlint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DavidAnson/markdownlint-cli2-action@v17
+        with:
+          globs: |
+            **/*.md
+            !**/node_modules/**
+          config: ".markdownlint.json"
